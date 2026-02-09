@@ -154,6 +154,7 @@ fn glGetError(env: &mut Environment) -> GLenum {
     })
 }
 fn glEnable(env: &mut Environment, cap: GLenum) {
+    log_dbg!("glEnable({:#x})", cap);
     with_ctx_and_mem(env, |gles, _mem| {
         unsafe { gles.Enable(cap) };
     });
@@ -162,6 +163,7 @@ fn glIsEnabled(env: &mut Environment, cap: GLenum) -> GLboolean {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.IsEnabled(cap) })
 }
 fn glDisable(env: &mut Environment, cap: GLenum) {
+    log_dbg!("glDisable({:#x})", cap);
     with_ctx_and_mem(env, |gles, _mem| {
         unsafe { gles.Disable(cap) };
     });
@@ -194,6 +196,9 @@ fn glGetFloatv(env: &mut Environment, pname: GLenum, params: MutPtr<GLfloat>) {
         let params = mem.ptr_at_mut(params, 16 /* upper bound */);
         unsafe { gles.GetFloatv(pname, params) };
     });
+}
+fn glGetFixedv(env: &mut Environment, pname: GLenum, params: MutPtr<GLfixed>) {
+    glGetIntegerv(env, pname, params.cast())
 }
 fn glGetIntegerv(env: &mut Environment, pname: GLenum, params: MutPtr<GLint>) {
     with_ctx_and_mem(env, |gles, mem| {
@@ -304,6 +309,7 @@ fn glAlphaFuncx(env: &mut Environment, func: GLenum, ref_: GLclampx) {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.AlphaFuncx(func, ref_) })
 }
 fn glBlendFunc(env: &mut Environment, sfactor: GLenum, dfactor: GLenum) {
+    log_dbg!("glBlendFunc({:#x}, {:#x})", sfactor, dfactor);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.BlendFunc(sfactor, dfactor)
     })
@@ -318,6 +324,13 @@ fn glColorMask(
     blue: GLboolean,
     alpha: GLboolean,
 ) {
+    log_dbg!(
+        "glColorMask(r:{} g:{} b:{} a:{})",
+        red,
+        green,
+        blue,
+        alpha
+    );
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.ColorMask(red, green, blue, alpha)
     })
@@ -588,16 +601,37 @@ fn glBufferSubData(
 
 // Non-pointers
 fn glColor4f(env: &mut Environment, red: GLfloat, green: GLfloat, blue: GLfloat, alpha: GLfloat) {
+    log_dbg!(
+        "glColor4f(r:{:.3} g:{:.3} b:{:.3} a:{:.3})",
+        red,
+        green,
+        blue,
+        alpha
+    );
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.Color4f(red, green, blue, alpha)
     })
 }
 fn glColor4x(env: &mut Environment, red: GLfixed, green: GLfixed, blue: GLfixed, alpha: GLfixed) {
+    log_dbg!(
+        "glColor4x(r:{:#x} g:{:#x} b:{:#x} a:{:#x})",
+        red,
+        green,
+        blue,
+        alpha
+    );
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.Color4x(red, green, blue, alpha)
     })
 }
 fn glColor4ub(env: &mut Environment, red: GLubyte, green: GLubyte, blue: GLubyte, alpha: GLubyte) {
+    log_dbg!(
+        "glColor4ub(r:{} g:{} b:{} a:{})",
+        red,
+        green,
+        blue,
+        alpha
+    );
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.Color4ub(red, green, blue, alpha)
     })
@@ -717,6 +751,7 @@ fn glVertexPointer(
 
 // Drawing
 fn glDrawArrays(env: &mut Environment, mode: GLenum, first: GLint, count: GLsizei) {
+    log_dbg!("glDrawArrays({:#x}, first:{}, count:{})", mode, first, count);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         let fog_state_backup = clamp_fog_state_values(gles);
         gles.DrawArrays(mode, first, count);
@@ -730,6 +765,7 @@ fn glDrawElements(
     type_: GLenum,
     indices: ConstVoidPtr,
 ) {
+    log_dbg!("glDrawElements({:#x}, count:{}, type:{:#x})", mode, count, type_);
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let fog_state_backup = clamp_fog_state_values(gles);
         let indices = translate_pointer_or_offset_to_host(
@@ -745,6 +781,7 @@ fn glDrawElements(
 
 // Clearing
 fn glClear(env: &mut Environment, mask: GLbitfield) {
+    log_dbg!("glClear({:#x})", mask);
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.Clear(mask) });
 }
 fn glClearColor(
@@ -754,6 +791,13 @@ fn glClearColor(
     blue: GLclampf,
     alpha: GLclampf,
 ) {
+    log_dbg!(
+        "glClearColor(r:{:.3} g:{:.3} b:{:.3} a:{:.3})",
+        red,
+        green,
+        blue,
+        alpha
+    );
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.ClearColor(red, green, blue, alpha)
     });
@@ -765,6 +809,13 @@ fn glClearColorx(
     blue: GLclampx,
     alpha: GLclampx,
 ) {
+    log_dbg!(
+        "glClearColorx(r:{:#x} g:{:#x} b:{:#x} a:{:#x})",
+        red,
+        green,
+        blue,
+        alpha
+    );
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.ClearColorx(red, green, blue, alpha)
     });
@@ -951,6 +1002,7 @@ fn glIsTexture(env: &mut Environment, texture: GLuint) -> GLboolean {
     with_ctx_and_mem(env, |gles, _mem| unsafe { gles.IsTexture(texture) })
 }
 fn glBindTexture(env: &mut Environment, target: GLenum, texture: GLuint) {
+    log_dbg!("glBindTexture({:#x}, {})", target, texture);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.BindTexture(target, texture)
     })
@@ -1055,10 +1107,31 @@ fn glTexImage2D(
 ) {
     with_ctx_and_mem(env, |gles, mem| unsafe {
         let pixels = if pixels.is_null() {
+            log_dbg!(
+                "glTexImage2D({:#x}, lvl:{}, {}x{}, ifmt:{:#x}, fmt:{:#x}, type:{:#x}, null)",
+                target,
+                level,
+                width,
+                height,
+                internalformat,
+                format,
+                type_
+            );
             std::ptr::null()
         } else {
             let pixel_count: GuestUSize = width.checked_mul(height).unwrap().try_into().unwrap();
             let size = image_size_estimate(pixel_count, format, type_);
+            log_dbg!(
+                "glTexImage2D({:#x}, lvl:{}, {}x{}, ifmt:{:#x}, fmt:{:#x}, type:{:#x}, {} bytes)",
+                target,
+                level,
+                width,
+                height,
+                internalformat,
+                format,
+                type_,
+                size
+            );
             mem.ptr_at(pixels.cast::<u8>(), size).cast::<GLvoid>()
         };
         gles.TexImage2D(
@@ -1153,18 +1226,34 @@ fn glCopyTexSubImage2D(
     })
 }
 fn glTexEnvf(env: &mut Environment, target: GLenum, pname: GLenum, param: GLfloat) {
+    log_dbg!("glTexEnvf({:#x}, {:#x}, {:.3})", target, pname, param);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.TexEnvf(target, pname, param)
     })
 }
 fn glTexEnvx(env: &mut Environment, target: GLenum, pname: GLenum, param: GLfixed) {
+    log_dbg!("glTexEnvx({:#x}, {:#x}, {:#x})", target, pname, param);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
         gles.TexEnvx(target, pname, param)
     })
 }
 fn glTexEnvi(env: &mut Environment, target: GLenum, pname: GLenum, param: GLint) {
+    log_dbg!("glTexEnvi({:#x}, {:#x}, {:#x})", target, pname, param);
     with_ctx_and_mem(env, |gles, _mem| unsafe {
-        gles.TexEnvi(target, pname, param)
+        let mut effective_param = param;
+        // Compatibility hack: avoid black modulation when current color is near zero.
+        if target == gles11::TEXTURE_ENV
+            && pname == gles11::TEXTURE_ENV_MODE
+            && param == gles11::MODULATE as GLint
+        {
+            let mut color = [0.0f32; 4];
+            gles.GetFloatv(gles11::CURRENT_COLOR, color.as_mut_ptr());
+            if color[0] <= 0.01 && color[1] <= 0.01 && color[2] <= 0.01 && color[3] <= 0.01 {
+                log_dbg!("Current color near zero; using REPLACE for TEXTURE_ENV_MODE");
+                effective_param = gles11::REPLACE as GLint;
+            }
+        }
+        gles.TexEnvi(target, pname, effective_param)
     })
 }
 fn glTexEnvfv(env: &mut Environment, target: GLenum, pname: GLenum, params: ConstPtr<GLfloat>) {
@@ -1175,6 +1264,7 @@ fn glTexEnvfv(env: &mut Environment, target: GLenum, pname: GLenum, params: Cons
     // TODO: GL_POINT_SPRITE_OES
     with_ctx_and_mem(env, |gles, mem| {
         let params = mem.ptr_at(params, 4 /* upper bound */);
+        log_dbg!("glTexEnvfv({:#x}, {:#x}, {:?})", target, pname, params);
         unsafe { gles.TexEnvfv(target, pname, params) }
     })
 }
@@ -1183,6 +1273,7 @@ fn glTexEnvxv(env: &mut Environment, target: GLenum, pname: GLenum, params: Cons
     assert!(target == gles11::TEXTURE_ENV);
     with_ctx_and_mem(env, |gles, mem| {
         let params = mem.ptr_at(params, 4 /* upper bound */);
+        log_dbg!("glTexEnvxv({:#x}, {:#x}, {:?})", target, pname, params);
         unsafe { gles.TexEnvxv(target, pname, params) }
     })
 }
@@ -1191,6 +1282,7 @@ fn glTexEnviv(env: &mut Environment, target: GLenum, pname: GLenum, params: Cons
     assert!(target == gles11::TEXTURE_ENV);
     with_ctx_and_mem(env, |gles, mem| {
         let params = mem.ptr_at(params, 4 /* upper bound */);
+        log_dbg!("glTexEnviv({:#x}, {:#x}, {:?})", target, pname, params);
         unsafe { gles.TexEnviv(target, pname, params) }
     })
 }
@@ -1478,6 +1570,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(glDisableClientState(_)),
     export_c_func!(glGetBooleanv(_, _)),
     export_c_func!(glGetFloatv(_, _)),
+    export_c_func!(glGetFixedv(_, _)),
     export_c_func!(glGetIntegerv(_, _)),
     export_c_func!(glGetPointerv(_, _)),
     export_c_func!(glGetTexEnviv(_, _, _)),

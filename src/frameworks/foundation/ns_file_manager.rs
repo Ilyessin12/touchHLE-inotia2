@@ -9,6 +9,7 @@ use super::{ns_array, ns_string, NSUInteger};
 use crate::dyld::{export_c_func, ConstantExports, FunctionExports, HostConstant};
 use crate::frameworks::foundation::ns_error::{NSCocoaErrorDomain, NSFileReadNoSuchFileError};
 use crate::frameworks::foundation::ns_string::get_static_str;
+use crate::libc::sys::mount::statfs_inner;
 use crate::fs::{FsError, GuestPath, GuestPathBuf};
 use crate::mem::{ConstPtr, MutPtr, Ptr};
 use crate::objc::{
@@ -27,6 +28,7 @@ const NSUserDomainMask: NSSearchPathDomainMask = 1;
 pub const NSFileModificationDate: &str = "NSFileModificationDate";
 pub const NSFileSize: &str = "NSFileSize";
 const NSFileSystemFreeSize: &str = "NSFileSystemFreeSize";
+const NSFileSystemSize: &str = "NSFileSystemSize";
 
 pub const CONSTANTS: ConstantExports = &[
     (
@@ -37,6 +39,10 @@ pub const CONSTANTS: ConstantExports = &[
     (
         "_NSFileSystemFreeSize",
         HostConstant::NSString(NSFileSystemFreeSize),
+    ),
+    (
+        "_NSFileSystemSize",
+        HostConstant::NSString(NSFileSystemSize),
     ),
 ];
 
@@ -124,6 +130,10 @@ pub const CLASSES: ClassExports = objc_classes! {
         Ok(_) => true,
         Err(()) => false
     }
+}
+
+- (NSUInteger)length {
+    0
 }
 
 - (bool)fileExistsAtPath:(id)path { // NSString*
@@ -256,6 +266,11 @@ pub const CLASSES: ClassExports = objc_classes! {
             false
         }
     }
+}
+
+- (id)fileSystemAttributesAtPath:(id)path { // NSString*
+    let error: MutPtr<id> = Ptr::null();
+    msg![env; this attributesOfFileSystemForPath:path error:error]
 }
 
 - (id)enumeratorAtPath:(id)path { // NSString*
@@ -404,20 +419,26 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)attributesOfFileSystemForPath:(id)_path
                               error:(MutPtr<id>)error {
     // TODO: other attributes
-    log_once!("Warning: NSFileManager attributesOfFileSystemForPath:error: returns only NSFileSystemFreeSize attribute!");
+    log_once!("Warning: NSFileManager attributesOfFileSystemForPath:error: returns only NSFileSystemFreeSize/NSFileSystemSize attributes!");
 
     assert!(error.is_null()); // TODO
 
     let dict = msg_class![env; NSMutableDictionary new];
 
-    // Reporting 1 Gb of free space should be enough
-    // TODO: unify with `statfs`
-    // TODO: account for path
-    let size: u64 = 1024 * 1024 * 1024;
-    let size_num: id = msg_class![env; NSNumber numberWithUnsignedLongLong:size];
+    // Use the same synthetic filesystem stats as statfs/statvfs.
+    let docs_path = env.fs.home_directory().join("Documents");
+    let docs_cstr = env.mem.alloc_and_write_cstr(docs_path.as_str().as_bytes());
+    let (_ret, statfs) = statfs_inner(env, docs_cstr.cast_const());
+    let free_size: u64 = statfs.f_bavail * statfs.f_bsize as u64;
+    let total_size: u64 = statfs.f_blocks * statfs.f_bsize as u64;
+
+    let free_num: id = msg_class![env; NSNumber numberWithUnsignedLongLong:free_size];
+    let total_num: id = msg_class![env; NSNumber numberWithUnsignedLongLong:total_size];
 
     let fs_free_size_key = get_static_str(env, NSFileSystemFreeSize);
-    () = msg![env; dict setObject:size_num forKey:fs_free_size_key];
+    () = msg![env; dict setObject:free_num forKey:fs_free_size_key];
+    let fs_size_key = get_static_str(env, NSFileSystemSize);
+    () = msg![env; dict setObject:total_num forKey:fs_size_key];
 
     let dict_imm = msg![env; dict copy];
     release(env, dict);

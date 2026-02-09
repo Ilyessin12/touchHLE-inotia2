@@ -759,11 +759,25 @@ impl GLES for GLES1OnGL2<'_> {
         gl21::GetFloatv(pname, params);
     }
     unsafe fn GetIntegerv(&mut self, pname: GLenum, params: *mut GLint) {
-        let (type_, _count) = GET_PARAMS.get_type_info(pname);
-        // TODO: type conversion
-        let allowed_float = type_ == ParamType::Float && pname == gl21::POINT_SIZE_MAX;
-        assert!(type_ == ParamType::Int || allowed_float);
-        gl21::GetIntegerv(pname, params);
+        let (type_, count) = GET_PARAMS.get_type_info(pname);
+        match type_ {
+            ParamType::Int => gl21::GetIntegerv(pname, params),
+            ParamType::Float | ParamType::FloatSpecial => {
+                let mut tmp = [0f32; 16];
+                gl21::GetFloatv(pname, tmp.as_mut_ptr());
+                for i in 0..(count as usize) {
+                    params.add(i).write_unaligned(tmp[i] as GLint);
+                }
+            }
+            ParamType::Boolean => {
+                let mut tmp = [0u8; 16];
+                gl21::GetBooleanv(pname, tmp.as_mut_ptr());
+                for i in 0..(count as usize) {
+                    params.add(i).write_unaligned(tmp[i] as GLint);
+                }
+            }
+            ParamType::_NonExhaustive => unreachable!(),
+        }
     }
     unsafe fn GetTexEnviv(&mut self, target: GLenum, pname: GLenum, params: *mut GLint) {
         let (type_, _count) = TEX_ENV_PARAMS.get_type_info(pname);
@@ -1575,6 +1589,41 @@ impl GLES for GLES1OnGL2<'_> {
                 || type_ == gl21::UNSIGNED_SHORT_4_4_4_4
                 || type_ == gl21::UNSIGNED_SHORT_5_5_5_1
         );
+        if format == gles11::ALPHA && type_ == gles11::UNSIGNED_BYTE {
+            if pixels.is_null() || width <= 0 || height <= 0 {
+                gl21::TexImage2D(
+                    target,
+                    level,
+                    gl21::LUMINANCE_ALPHA as GLint,
+                    width,
+                    height,
+                    border,
+                    gl21::LUMINANCE_ALPHA,
+                    gl21::UNSIGNED_BYTE,
+                    std::ptr::null(),
+                );
+            } else {
+                let pixel_count = (width as usize).saturating_mul(height as usize);
+                let input = std::slice::from_raw_parts(pixels.cast::<u8>(), pixel_count);
+                let mut converted = Vec::with_capacity(pixel_count.saturating_mul(2));
+                for &alpha in input {
+                    converted.push(0xFF);
+                    converted.push(alpha);
+                }
+                gl21::TexImage2D(
+                    target,
+                    level,
+                    gl21::LUMINANCE_ALPHA as GLint,
+                    width,
+                    height,
+                    border,
+                    gl21::LUMINANCE_ALPHA,
+                    gl21::UNSIGNED_BYTE,
+                    converted.as_ptr().cast::<GLvoid>(),
+                );
+            }
+            return;
+        }
         gl21::TexImage2D(
             target,
             level,
@@ -1615,6 +1664,41 @@ impl GLES for GLES1OnGL2<'_> {
                 || type_ == gl21::UNSIGNED_SHORT_4_4_4_4
                 || type_ == gl21::UNSIGNED_SHORT_5_5_5_1
         );
+        if format == gles11::ALPHA && type_ == gles11::UNSIGNED_BYTE {
+            if pixels.is_null() || width <= 0 || height <= 0 {
+                gl21::TexSubImage2D(
+                    target,
+                    level,
+                    xoffset,
+                    yoffset,
+                    width,
+                    height,
+                    gl21::LUMINANCE_ALPHA,
+                    gl21::UNSIGNED_BYTE,
+                    std::ptr::null(),
+                );
+            } else {
+                let pixel_count = (width as usize).saturating_mul(height as usize);
+                let input = std::slice::from_raw_parts(pixels.cast::<u8>(), pixel_count);
+                let mut converted = Vec::with_capacity(pixel_count.saturating_mul(2));
+                for &alpha in input {
+                    converted.push(0xFF);
+                    converted.push(alpha);
+                }
+                gl21::TexSubImage2D(
+                    target,
+                    level,
+                    xoffset,
+                    yoffset,
+                    width,
+                    height,
+                    gl21::LUMINANCE_ALPHA,
+                    gl21::UNSIGNED_BYTE,
+                    converted.as_ptr().cast::<GLvoid>(),
+                );
+            }
+            return;
+        }
         gl21::TexSubImage2D(
             target, level, xoffset, yoffset, width, height, format, type_, pixels,
         )

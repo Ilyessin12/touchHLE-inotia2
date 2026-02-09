@@ -41,7 +41,15 @@ fn objc_msgSend_inner(env: &mut Environment, receiver: id, selector: SEL, super2
     }
 
     let orig_class = super2.unwrap_or_else(|| ObjC::read_isa(receiver, &env.mem));
-    assert!(orig_class != nil);
+    if orig_class == nil {
+        log!(
+            "Warning: objc_msgSend with nil class for receiver {:?} selector {}",
+            receiver,
+            selector.as_str(&env.mem)
+        );
+        env.cpu.regs_mut()[0..2].fill(0);
+        return;
+    }
 
     // Traverse the chain of superclasses to find the method implementation.
 
@@ -50,12 +58,28 @@ fn objc_msgSend_inner(env: &mut Environment, receiver: id, selector: SEL, super2
         if class == nil {
             assert!(class != orig_class);
 
-            let class_host_object = env.objc.get_host_object(orig_class).unwrap();
-            let &super::ClassHostObject {
+            let Some(class_host_object) = env.objc.get_host_object(orig_class) else {
+                log!(
+                    "Warning: objc_msgSend to unknown class {:?} for selector {}",
+                    orig_class,
+                    selector.as_str(&env.mem)
+                );
+                env.cpu.regs_mut()[0..2].fill(0);
+                return;
+            };
+            let Some(&super::ClassHostObject {
                 ref name,
                 is_metaclass,
                 ..
-            } = class_host_object.as_any().downcast_ref().unwrap();
+            }) = class_host_object.as_any().downcast_ref() else {
+                log!(
+                    "Warning: objc_msgSend class metadata missing for {:?} selector {}",
+                    orig_class,
+                    selector.as_str(&env.mem)
+                );
+                env.cpu.regs_mut()[0..2].fill(0);
+                return;
+            };
 
             panic!(
                 "{} {:?} ({}class \"{}\", {:?}){} does not respond to selector \"{}\"!",
@@ -73,7 +97,15 @@ fn objc_msgSend_inner(env: &mut Environment, receiver: id, selector: SEL, super2
             );
         }
 
-        let host_object = env.objc.get_host_object(class).unwrap();
+        let Some(host_object) = env.objc.get_host_object(class) else {
+            log!(
+                "Warning: objc_msgSend to unknown class {:?} for selector {}",
+                class,
+                selector.as_str(&env.mem)
+            );
+            env.cpu.regs_mut()[0..2].fill(0);
+            return;
+        };
 
         if let Some(&super::ClassHostObject {
             superclass,

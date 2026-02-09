@@ -865,6 +865,11 @@ fn fsync(env: &mut Environment, fd: FileDescriptor) -> i32 {
     }
 }
 
+/// Special extension for host code: [ftruncate] without guest ABI.
+pub fn ftruncate_direct(env: &mut Environment, fd: FileDescriptor, len: off_t) -> i32 {
+    ftruncate(env, fd, len)
+}
+
 fn ftruncate(env: &mut Environment, fd: FileDescriptor, len: off_t) -> i32 {
     // TODO: handle errno properly
     set_errno(env, 0);

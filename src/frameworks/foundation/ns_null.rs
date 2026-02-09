@@ -38,6 +38,11 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (())release {}
 - (id)autorelease { this }
 
+- (id)description {
+    // Matches Cocoa behavior: NSNull prints as "<null>".
+    super::ns_string::get_static_str(env, "<null>")
+}
+
 @end
 
 };

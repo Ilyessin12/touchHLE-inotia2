@@ -669,6 +669,38 @@ pub const CLASSES: ClassExports = objc_classes! {
           encoding:(NSStringEncoding)encoding {
     get_bytes_buffer_inner(env, this, buffer, buffer_size, encoding, true)
 }
+- (bool)getBytes:(MutPtr<u8>)buffer
+       maxLength:(NSUInteger)buffer_size
+      usedLength:(MutPtr<NSUInteger>)used_length
+        encoding:(NSStringEncoding)encoding
+         options:(NSUInteger)_options
+           range:(NSRange)_range
+  remainingRange:(MutPtr<NSRange>)remaining_range {
+    // Minimal stub: encode the full string and ignore range/options.
+    let src = to_rust_string(env, this);
+    let required = src.len();
+    if encoding == NSASCIIStringEncoding
+        || encoding == NSMacOSRomanStringEncoding
+        || encoding == NSISOLatin1StringEncoding
+    {
+        assert!(src.as_bytes().iter().all(|byte| byte.is_ascii()));
+    }
+    let dest_len = buffer_size as usize;
+    let write_len = required.min(dest_len);
+    {
+        let dest = env.mem.bytes_at_mut(buffer, buffer_size);
+        dest[..write_len].copy_from_slice(&src.as_bytes()[..write_len]);
+    }
+
+    if !used_length.is_null() {
+        env.mem.write(used_length, write_len.try_into().unwrap());
+    }
+    if !remaining_range.is_null() {
+        env.mem.write(remaining_range, NSRange { location: 0, length: 0 });
+    }
+
+    required <= dest_len
+}
 - (())getCString:(MutPtr<u8>)buffer {
     let encoding: NSStringEncoding = msg_class![env; NSString defaultCStringEncoding];
 

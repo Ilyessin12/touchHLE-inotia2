@@ -12,9 +12,10 @@ use super::cf_array::CFArrayRef;
 use super::cf_string::CFStringRef;
 use super::cf_url::CFURLRef;
 use super::CFTypeRef;
-use crate::dyld::{export_c_func, ConstantExports, FunctionExports, HostConstant};
+use crate::dyld::{export_c_func, export_c_func_aliased, ConstantExports, FunctionExports, HostConstant};
 use crate::frameworks::foundation::ns_bundle::NSBundleHostObject;
 use crate::frameworks::foundation::{ns_array, ns_string, NSUInteger};
+use crate::mem::GuestUSize;
 use crate::objc::{id, msg, msg_class, retain};
 use crate::Environment;
 
@@ -88,6 +89,27 @@ fn CFBundleCopyResourceURL(
                                           withExtension:resource_type
                                            subdirectory:sub_dir_name];
     msg![env; url copy]
+}
+
+pub extern "C" fn CFBundleCopyResourceURLForLocalization(
+    _bundle: GuestUSize,
+    _resource_name: GuestUSize,
+    _resource_type: GuestUSize,
+    _sub_dir_name: GuestUSize,
+    _localization_name: GuestUSize,
+) -> GuestUSize {
+    0
+}
+
+fn CFBundleCopyResourceURLForLocalization_export(
+    env: &mut Environment,
+    bundle: CFBundleRef,
+    resource_name: CFStringRef,
+    resource_type: CFStringRef,
+    sub_dir_name: CFStringRef,
+    _localization_name: CFStringRef,
+) -> CFURLRef {
+    CFBundleCopyResourceURL(env, bundle, resource_name, resource_type, sub_dir_name)
 }
 
 pub fn CFBundleCopyBundleLocalizations(env: &mut Environment, bundle: CFBundleRef) -> CFArrayRef {
@@ -178,6 +200,10 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFBundleCopyBundleURL(_)),
     export_c_func!(CFBundleCopyResourcesDirectoryURL(_)),
     export_c_func!(CFBundleCopyResourceURL(_, _, _, _)),
+    export_c_func_aliased!(
+        "CFBundleCopyResourceURLForLocalization",
+        CFBundleCopyResourceURLForLocalization_export(_, _, _, _, _)
+    ),
     export_c_func!(CFBundleCopyBundleLocalizations(_)),
     export_c_func!(CFBundleCopyPreferredLocalizationsFromArray(_)),
     export_c_func!(CFBundleCopyLocalizedString(_, _, _, _)),

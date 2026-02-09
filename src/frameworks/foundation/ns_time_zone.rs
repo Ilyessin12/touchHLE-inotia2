@@ -34,6 +34,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, new)
 }
 
++ (id)timeZoneWithAbbreviation:(id)_abbreviation {
+    msg![env; this localTimeZone]
+}
+
 + (id)localTimeZone {
     // As reported by the Aspen Simulator
     let tz_name: id = ns_string::get_static_str(env, "Canada/Eastern");

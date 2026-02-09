@@ -10,7 +10,7 @@
 
 use super::cf_allocator::{kCFAllocatorDefault, CFAllocatorRef};
 use super::CFIndex;
-use crate::dyld::{export_c_func, FunctionExports};
+use crate::dyld::{export_c_func, export_c_func_aliased, FunctionExports};
 use crate::frameworks::core_foundation::cf_string::{
     kCFStringEncodingASCII, CFStringConvertEncodingToNSStringEncoding, CFStringEncoding,
     CFStringRef,
@@ -19,8 +19,8 @@ use crate::frameworks::foundation::ns_string::{
     get_static_str, to_rust_string, NSUTF8StringEncoding,
 };
 use crate::frameworks::foundation::NSUInteger;
-use crate::mem::{ConstPtr, MutPtr, Ptr};
-use crate::objc::{id, msg, msg_class, release};
+use crate::mem::{ConstPtr, GuestUSize, MutPtr, Ptr};
+use crate::objc::{id, msg, msg_class, nil, release, retain};
 use crate::Environment;
 
 pub type CFURLRef = super::CFTypeRef;
@@ -182,6 +182,73 @@ fn CFURLHasDirectoryPath(env: &mut Environment, url: CFURLRef) -> bool {
         || msg![env; last isEqual:(get_static_str(env, ".."))]
 }
 
+pub extern "C" fn CFURLCreateDataAndPropertiesFromResource(
+    _alloc: GuestUSize,
+    _url: GuestUSize,
+    _resource_data_ptr: GuestUSize,
+    _properties_ptr: GuestUSize,
+    _desired_props: GuestUSize,
+    _error_code: GuestUSize,
+) -> GuestUSize {
+    0
+}
+
+fn CFURLCreateDataAndPropertiesFromResource_export(
+    env: &mut Environment,
+    _alloc: GuestUSize,
+    url_bits: GuestUSize,
+    resource_data_ptr: GuestUSize,
+    properties_ptr: GuestUSize,
+    _desired_props: GuestUSize,
+    _error_code: GuestUSize,
+) -> GuestUSize {
+    let url: CFURLRef = Ptr::from_bits(url_bits);
+    let path: id = msg![env; url path];
+    if path == nil {
+        if resource_data_ptr != 0 {
+            env.mem
+                .write(MutPtr::from_bits(resource_data_ptr), nil);
+        }
+        if properties_ptr != 0 {
+            env.mem.write(MutPtr::from_bits(properties_ptr), nil);
+        }
+        return 0;
+    }
+
+    let path_str = to_rust_string(env, path);
+    let data: id = msg_class![env; NSData dataWithContentsOfFile:path];
+    if data == nil {
+        log!("CFURLCreateDataAndPropertiesFromResource: failed to load {:?}", path_str);
+        if resource_data_ptr != 0 {
+            env.mem
+                .write(MutPtr::from_bits(resource_data_ptr), nil);
+        }
+        if properties_ptr != 0 {
+            env.mem.write(MutPtr::from_bits(properties_ptr), nil);
+        }
+        return 0;
+    }
+
+    let length: NSUInteger = msg![env; data length];
+    log!(
+        "CFURLCreateDataAndPropertiesFromResource: loaded {:?} ({} bytes)",
+        path_str,
+        length
+    );
+    retain(env, data);
+    if resource_data_ptr != 0 {
+        let out_ptr: MutPtr<id> = MutPtr::from_bits(resource_data_ptr);
+        env.mem.write(out_ptr, data);
+    } else {
+        release(env, data);
+    }
+
+    if properties_ptr != 0 {
+        env.mem.write(MutPtr::from_bits(properties_ptr), nil);
+    }
+    1
+}
+
 pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFURLGetFileSystemRepresentation(_, _, _, _)),
     export_c_func!(CFURLCreateFromFileSystemRepresentation(_, _, _, _)),
@@ -192,4 +259,8 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CFURLCreateCopyAppendingPathComponent(_, _, _, _)),
     export_c_func!(CFURLCreateCopyDeletingLastPathComponent(_, _)),
     export_c_func!(CFURLHasDirectoryPath(_)),
+    export_c_func_aliased!(
+        "CFURLCreateDataAndPropertiesFromResource",
+        CFURLCreateDataAndPropertiesFromResource_export(_, _, _, _, _, _)
+    ),
 ];

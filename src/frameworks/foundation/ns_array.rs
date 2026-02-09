@@ -176,6 +176,41 @@ pub const CLASSES: ClassExports = objc_classes! {
     autorelease(env, res_imm)
 }
 
+// NSKeyValueCoding on NSArray
+- (id)valueForKey:(id)key { // NSString*
+    let key_str = ns_string::to_rust_string(env, key);
+    if key_str.starts_with('@') {
+        if key_str == "@count" {
+            let count: NSUInteger = msg![env; this count];
+            return msg_class![env; NSNumber numberWithUnsignedLongLong:(count as u64)];
+        }
+        return nil;
+    }
+
+    let count: NSUInteger = msg![env; this count];
+    let mut values: Vec<id> = Vec::with_capacity(count as usize);
+    let value_sel = env.objc.lookup_selector("valueForKey:").unwrap();
+    for i in 0..count {
+        let obj: id = msg![env; this objectAtIndex:i];
+        let responds: bool = msg![env; obj respondsToSelector:value_sel];
+        let mut value: id = if responds {
+            msg![env; obj valueForKey:key]
+        } else {
+            nil
+        };
+
+        if value == nil {
+            value = msg_class![env; NSNull null];
+        }
+
+        retain(env, value);
+        values.push(value);
+    }
+
+    let array = from_vec(env, values);
+    autorelease(env, array)
+}
+
 - (id)sortedArrayUsingFunction:(GuestFunction)comparator
                        context:(MutVoidPtr)context {
     let array = msg![env; this mutableCopy];

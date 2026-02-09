@@ -7,7 +7,8 @@
 //!
 //! [Audio Unit Programming Guide](https://developer.apple.com/library/archive/documentation/MusicAudio/Conceptual/AudioUnitProgrammingGuide/TheAudioUnit/TheAudioUnit.html)
 
-use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
 use touchHLE_openal_soft_wrapper::al_types::{ALuint, ALvoid};
 use touchHLE_openal_soft_wrapper::{
@@ -202,6 +203,9 @@ fn AudioUnitGetProperty(
 }
 
 fn AudioOutputUnitStart(env: &mut Environment, ci: AudioUnit) -> OSStatus {
+    let run_loop = CFRunLoopGetMain(env);
+    ns_run_loop::add_audio_unit(env, run_loop, ci);
+
     let _context_manager = env.framework_state.audio_toolbox.make_al_context_current();
 
     let mut source: ALuint = 0;
@@ -211,14 +215,22 @@ fn AudioOutputUnitStart(env: &mut Environment, ci: AudioUnit) -> OSStatus {
         assert_eq!(alGetError(), 0);
     }
 
-    let audio_components_state = audio_components::State::get(&mut env.framework_state);
-    let audio_unit_state = audio_components_state
-        .audio_component_instances
-        .get_mut(&ci)
-        .unwrap();
-    audio_unit_state.al_source = Some(source);
-    audio_unit_state.last_render_time = Some(Instant::now());
-    audio_unit_state.started = true;
+    {
+        let audio_components_state = audio_components::State::get(&mut env.framework_state);
+        let audio_unit_state = audio_components_state
+            .audio_component_instances
+            .get_mut(&ci)
+            .unwrap();
+        audio_unit_state.al_source = Some(source);
+        // Seed the render timer slightly in the past so the first render
+        // produces a meaningful buffer immediately.
+        audio_unit_state.last_render_time = Some(Instant::now() - Duration::from_millis(20));
+        audio_unit_state.started = true;
+    }
+
+    // Prime one render immediately so audio engines that expect callbacks
+    // during startup (like FMOD) don't bail out early.
+    render_audio_unit(env, ci);
 
     let result = 0; // Success
     log_dbg!("AudioOutputUnitStart({:?}) -> {:?}", ci, result);
@@ -329,7 +341,25 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
     // if it's been too long since the last render.
     // TODO: Verify if this behavior is right
     let elapsed_time = now.duration_since(audio_unit_host_object.last_render_time.unwrap());
-    let number_frames = (elapsed_time.as_secs_f64().min(0.1) * sample_rate) as u32;
+    let mut number_frames = (elapsed_time.as_secs_f64().min(0.1) * sample_rate) as u32;
+    let max_frames = audio_unit_host_object.maximum_frames_per_slice;
+    if number_frames > max_frames {
+        number_frames = max_frames;
+    }
+    if number_frames == 0 {
+        number_frames = 1;
+    }
+
+    static RENDER_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
+    let log_count = RENDER_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+    if log_count < 5 {
+        log_dbg!(
+            "render_audio_unit {:?}: frames {} sample_rate {}",
+            audio_unit,
+            number_frames,
+            sample_rate
+        );
+    }
 
     let bytes_per_channel = stream_format.bits_per_channel / 8;
     let actual_bytes_per_frame = stream_format.channels_per_frame * bytes_per_channel;
@@ -390,7 +420,7 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         input_proc: inputProc,
         input_proc_ref_con: inputProcRefCon,
     } = audio_unit_host_object.render_callback.unwrap();
-    let () = inputProc.call_from_host(
+    let render_status: OSStatus = inputProc.call_from_host(
         env,
         (
             inputProcRefCon,
@@ -401,6 +431,44 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
             audio_buffer_list,
         ),
     );
+    if render_status != 0 {
+        log_dbg!(
+            "render_audio_unit {:?}: render callback returned {}",
+            audio_unit,
+            render_status
+        );
+    }
+
+    let bytes_written = if input_stream_format.is_some() {
+        let audio_buffer_list_value: AudioBufferList<1> =
+            env.mem.read(audio_buffer_list.cast::<AudioBufferList<1>>());
+        audio_buffer_list_value.buffers[0].data_byte_size
+    } else {
+        let audio_buffer_list_value: AudioBufferList<2> =
+            env.mem.read(audio_buffer_list.cast::<AudioBufferList<2>>());
+        audio_buffer_list_value.buffers[0].data_byte_size
+    };
+    if bytes_written == 0 {
+        log_dbg!("render_audio_unit {:?}: render callback returned 0 bytes", audio_unit);
+    }
+
+    let buffer_size = buffer_size.min(bytes_written);
+    if buffer_size == 0 {
+        env.mem.free(action_flags.cast_void());
+        env.mem.free(buffer1Data.cast_void());
+        if let Some(buffer2Data) = buffer2Data {
+            env.mem.free(buffer2Data.cast_void());
+        }
+        env.mem.free(audio_buffer_list.cast_void());
+
+        let audio_unit_host_object = audio_components::State::get(&mut env.framework_state)
+            .audio_component_instances
+            .get_mut(&audio_unit)
+            .unwrap();
+        audio_unit_host_object.last_render_time = Some(now);
+        audio_unit_host_object.is_running_handler = false;
+        return;
+    }
 
     let (al_format, _sample_rate, processed_data) =
         decode_buffer(&env.mem, &stream_format, buffer1Data.cast(), buffer_size);

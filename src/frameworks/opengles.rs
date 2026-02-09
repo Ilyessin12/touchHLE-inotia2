@@ -12,7 +12,7 @@
 mod eagl;
 mod gles_guest;
 
-use touchHLE_gl_bindings::gles11::types::GLenum;
+use touchHLE_gl_bindings::gles11::types::{GLenum, GLuint};
 
 use crate::mem::ConstPtr;
 
@@ -29,6 +29,8 @@ pub struct State {
     /// Current EAGLContext for each thread
     current_ctxs: std::collections::HashMap<crate::ThreadId, Option<crate::objc::id>>,
     strings_cache: std::collections::HashMap<GLenum, ConstPtr<u8>>,
+    /// Track texture formats by (thread, texture id) for text-related handling.
+    texture_formats: std::collections::HashMap<(crate::ThreadId, GLuint), GLenum>,
 }
 impl State {
     fn current_ctx_for_thread(&mut self, thread: crate::ThreadId) -> &mut Option<crate::objc::id> {

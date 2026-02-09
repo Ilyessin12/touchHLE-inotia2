@@ -22,6 +22,7 @@ use crate::Environment;
 use std::collections::HashMap;
 
 const CACHE_SIZE: usize = 10;
+const DUMMY_PIXEL: [u8; 4] = [0, 0, 0, 255];
 
 #[derive(Default)]
 pub struct State {
@@ -132,7 +133,20 @@ pub const CLASSES: ClassExports = objc_classes! {
 - (id)initWithData:(id)data { // NSData*
     let slice = ns_data::to_rust_slice(env, data);
     // TODO: refactor common parts
-    let image = Image::from_bytes(slice).unwrap();
+    let image = match Image::from_bytes(slice) {
+        Ok(image) => image,
+        Err(err) => {
+            let preview_len = slice.len().min(16);
+            let preview = &slice[..preview_len];
+            eprintln!(
+                "Warning: Image decoding failed ({} bytes, head {:?}): {}. Using fallback 1x1 image.",
+                slice.len(),
+                preview,
+                err
+            );
+            Image::from_pixel_vec(DUMMY_PIXEL.to_vec(), (1, 1))
+        }
+    };
     let cg_image = cg_image::from_image(env, image);
     env.objc.borrow_mut::<UIImageHostObject>(this).cg_image = cg_image;
     this

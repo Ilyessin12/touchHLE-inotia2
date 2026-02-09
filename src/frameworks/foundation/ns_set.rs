@@ -11,7 +11,7 @@ use super::ns_enumerator::{fast_enumeration_helper, NSFastEnumerationState};
 use super::NSUInteger;
 use crate::abi::DotDotDot;
 use crate::environment::Environment;
-use crate::mem::MutPtr;
+use crate::mem::{ConstPtr, MutPtr};
 use crate::objc::{
     autorelease, id, msg, msg_class, nil, objc_classes, retain, ClassExports, HostObject, NSZonePtr,
 };
@@ -46,6 +46,12 @@ pub const CLASSES: ClassExports = objc_classes! {
     assert!(object != nil);
     let new: id = msg![env; this alloc];
     let new: id = msg![env; new initWithObject:object];
+    autorelease(env, new)
+}
+
++ (id)setWithObjects:(ConstPtr<id>)objects_ptr count:(NSUInteger)count {
+    let new: id = msg![env; this alloc];
+    let new: id = msg![env; new initWithObjects:objects_ptr count:count];
     autorelease(env, new)
 }
 
@@ -121,6 +127,11 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)initWithObjects:(id)first_obj, ...args {
     env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects(env, first_obj, args);
+    this
+}
+
+- (id)initWithObjects:(ConstPtr<id>)objects_ptr count:(NSUInteger)count {
+    env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects_ptr(env, objects_ptr, count);
     this
 }
 
@@ -203,6 +214,11 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 - (id)initWithObjects:(id)first_obj, ...args {
     env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects(env, first_obj, args);
+    this
+}
+
+- (id)initWithObjects:(ConstPtr<id>)objects_ptr count:(NSUInteger)count {
+    env.objc.borrow_mut::<SetHostObject>(this).dict = set_from_objects_ptr(env, objects_ptr, count);
     this
 }
 
@@ -307,6 +323,23 @@ fn set_from_objects(env: &mut Environment, first_obj: id, args: DotDotDot) -> Di
             break;
         }
         dict.insert(env, next_arg, null, /* copy_key: */ false);
+    }
+    dict
+}
+
+/// Helper method shared between `initWithObjects:count:` of `_touchHLE_NSSet`
+/// and `_touchHLE_NSMutableSet`.
+fn set_from_objects_ptr(
+    env: &mut Environment,
+    objects_ptr: ConstPtr<id>,
+    count: NSUInteger,
+) -> DictionaryHostObject {
+    let null: id = msg_class![env; NSNull null];
+
+    let mut dict = <DictionaryHostObject as Default>::default();
+    for i in 0..count {
+        let obj: id = env.mem.read(objects_ptr + i);
+        dict.insert(env, obj, null, /* copy_key: */ false);
     }
     dict
 }

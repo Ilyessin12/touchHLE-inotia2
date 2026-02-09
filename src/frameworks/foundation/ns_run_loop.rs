@@ -103,6 +103,23 @@ pub const CLASSES: ClassExports = objc_classes! {
     ns_timer::set_run_loop(env, timer, this);
 }
 
+- (())removeTimer:(id)timer // NSTimer*
+       forMode:(NSRunLoopMode)mode {
+    let default_mode = ns_string::get_static_str(env, NSDefaultRunLoopMode);
+    let common_modes = ns_string::get_static_str(env, NSRunLoopCommonModes);
+    // TODO: handle other modes
+    assert!(msg![env; mode isEqualToString:default_mode] || msg![env; mode isEqualToString:common_modes]);
+
+    log_dbg!(
+        "Removing timer {:?} from run loop {:?} with mode {:?}",
+        timer,
+        this,
+        ns_string::to_rust_string(env, mode),
+    );
+
+    remove_timer(env, this, timer);
+}
+
 - (())run {
     run_run_loop(env, this, /* single_iteration: */ false, None);
 }
@@ -120,10 +137,13 @@ pub const CLASSES: ClassExports = objc_classes! {
 
 /// For use by Audio Toolbox.
 pub fn add_audio_unit(env: &mut Environment, run_loop: id, unit: AudioUnit) {
-    env.objc
+    let units = &mut env
+        .objc
         .borrow_mut::<NSRunLoopHostObject>(run_loop)
-        .audio_units
-        .push(unit);
+        .audio_units;
+    if !units.contains(&unit) {
+        units.push(unit);
+    }
 }
 
 /// For use by Audio Toolbox.

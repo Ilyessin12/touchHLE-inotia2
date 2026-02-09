@@ -8,7 +8,7 @@
 use super::cg_affine_transform::CGAffineTransform;
 use super::cg_image::CGImageRef;
 use super::{cg_bitmap_context, cg_color, CGFloat, CGRect};
-use crate::dyld::{export_c_func, FunctionExports};
+use crate::dyld::{export_c_func, export_c_func_aliased, FunctionExports};
 use crate::frameworks::core_foundation::{CFRelease, CFRetain, CFTypeRef};
 use crate::frameworks::core_graphics::cg_bitmap_context::{
     CGBitmapContextGetHeight, CGBitmapContextGetWidth,
@@ -111,6 +111,16 @@ pub fn CGContextClearRect(env: &mut Environment, context: CGContextRef, rect: CG
     cg_bitmap_context::fill_rect(env, context, rect, /* clear: */ true);
 }
 
+pub extern "C" fn CGContextSetTextDrawingMode(_context: CGContextRef, _mode: i32) {}
+
+fn CGContextSetTextDrawingMode_export(
+    _env: &mut Environment,
+    context: CGContextRef,
+    mode: i32,
+) {
+    CGContextSetTextDrawingMode(context, mode);
+}
+
 fn CGContextClipToRect(env: &mut Environment, context: CGContextRef, rect: CGRect) {
     if rect.origin == CGPointZero
         && rect.size.height == CGBitmapContextGetHeight(env, context) as f32
@@ -205,6 +215,7 @@ pub const FUNCTIONS: FunctionExports = &[
     export_c_func!(CGContextSetGrayFillColor(_, _, _)),
     export_c_func!(CGContextFillRect(_, _)),
     export_c_func!(CGContextClearRect(_, _)),
+    export_c_func_aliased!("CGContextSetTextDrawingMode", CGContextSetTextDrawingMode_export(_, _)),
     export_c_func!(CGContextClipToRect(_, _)),
     export_c_func!(CGContextConcatCTM(_, _)),
     export_c_func!(CGContextGetCTM(_)),

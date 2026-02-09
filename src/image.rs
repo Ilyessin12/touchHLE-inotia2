@@ -65,7 +65,7 @@ impl Image {
         };
         if pixels.is_null() {
             let reason = unsafe { CStr::from_ptr(stbi_failure_reason()) };
-            return Err(reason.to_str().unwrap().to_string());
+            return Err(reason.to_string_lossy().into_owned());
         }
 
         let width: u32 = x.try_into().unwrap();
