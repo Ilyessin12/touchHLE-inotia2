@@ -61,6 +61,7 @@ pub struct Options {
     pub dumping_options: DumpingOptions,
     pub dumping_file: PathBuf,
     pub ignore_gl_errors: bool,
+    pub audio_log: bool,
 }
 
 impl Default for Options {
@@ -93,6 +94,7 @@ impl Default for Options {
             dumping_options: Default::default(),
             dumping_file: crate::paths::user_data_base_path().join("DUMP.txt"),
             ignore_gl_errors: false,
+            audio_log: true,
         }
     }
 }
@@ -248,6 +250,10 @@ impl Options {
             self.dumping_file = crate::paths::user_data_base_path().join(path);
         } else if arg == "--ignore-gl-errors" {
             self.ignore_gl_errors = true;
+        } else if arg == "--audio-log" {
+            self.audio_log = true;
+        } else if arg == "--no-audio-log" {
+            self.audio_log = false;
         } else {
             return Ok(false);
         };

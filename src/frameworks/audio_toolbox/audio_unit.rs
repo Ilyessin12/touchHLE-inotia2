@@ -7,6 +7,7 @@
 //!
 //! [Audio Unit Programming Guide](https://developer.apple.com/library/archive/documentation/MusicAudio/Conceptual/AudioUnitProgrammingGuide/TheAudioUnit/TheAudioUnit.html)
 
+use std::fmt;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
@@ -35,6 +36,18 @@ use crate::objc::nil;
 use super::audio_components::{AURenderCallbackStruct, AudioComponentInstance};
 use super::audio_queue::decode_buffer;
 use super::audio_session;
+
+fn audio_log(env: &Environment, args: fmt::Arguments) {
+    if env.options.audio_log {
+        log!("{}", args);
+    }
+}
+
+fn audio_log_dbg(env: &Environment, args: fmt::Arguments) {
+    if env.options.audio_log {
+        log_dbg!("{}", args);
+    }
+}
 
 pub type AudioUnit = AudioComponentInstance;
 type AudioUnitPropertyID = u32;
@@ -71,14 +84,21 @@ const kAudioOutputUnitProperty_EnableIO: AudioUnitPropertyID = 2003;
 fn AudioUnitInitialize(env: &mut Environment, in_unit: AudioUnit) -> OSStatus {
     let run_loop = CFRunLoopGetMain(env);
     ns_run_loop::add_audio_unit(env, run_loop, in_unit);
+    audio_log(env, format_args!("AudioUnitInitialize({:?}) -> 0", in_unit));
     0 // success
 }
 
 fn AudioUnitUninitialize(env: &mut Environment, in_unit: AudioUnit) -> OSStatus {
     let run_loop = CFRunLoopGetMain(env);
     match ns_run_loop::remove_audio_unit(env, run_loop, in_unit) {
-        Ok(_) => 0,
-        Err(_) => paramErr, // TODO: handle different errors
+        Ok(_) => {
+            audio_log(env, format_args!("AudioUnitUninitialize({:?}) -> 0", in_unit));
+            0
+        }
+        Err(_) => {
+            audio_log(env, format_args!("AudioUnitUninitialize({:?}) -> {:?}", in_unit, paramErr));
+            paramErr
+        }
     }
 }
 
@@ -106,7 +126,18 @@ fn AudioUnitSetProperty(
             let render_callback = env.mem.read(in_data.cast::<AURenderCallbackStruct>());
             host_object.render_callback = Some(render_callback);
             result = 0;
-            log_dbg!("AudioUnitSetProperty({:?}, kAudioUnitProperty_SetRenderCallback, {:?}, {:?}, {:?}, {:?}) -> {:?}", in_unit, in_scope, in_element, render_callback, in_data_size, result);
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioUnitSetProperty({:?}, kAudioUnitProperty_SetRenderCallback, {:?}, {:?}, {:?}, {:?}) -> {:?}",
+                    in_unit,
+                    in_scope,
+                    in_element,
+                    render_callback,
+                    in_data_size,
+                    result
+                ),
+            );
         }
         kAudioUnitProperty_StreamFormat => {
             assert_eq!(in_data_size, guest_size_of::<AudioStreamBasicDescription>());
@@ -119,7 +150,18 @@ fn AudioUnitSetProperty(
                 _ => unimplemented!("in_scope {}", in_scope),
             };
             result = 0;
-            log_dbg!("AudioUnitSetProperty({:?}, kAudioUnitProperty_StreamFormat, {:?}, {:?}, {:?}, {:?}) -> {:?}", in_unit, in_scope, in_element, stream_format, in_data_size, result);
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioUnitSetProperty({:?}, kAudioUnitProperty_StreamFormat, {:?}, {:?}, {:?}, {:?}) -> {:?}",
+                    in_unit,
+                    in_scope,
+                    in_element,
+                    stream_format,
+                    in_data_size,
+                    result
+                ),
+            );
         }
         kAudioOutputUnitProperty_EnableIO => {
             assert_eq!(in_scope, kAudioUnitScope_Output);
@@ -128,7 +170,18 @@ fn AudioUnitSetProperty(
             // Output is enabled by default.
             assert_eq!(enabled, 1);
             result = 0;
-            log_dbg!("AudioUnitSetProperty({:?}, kAudioOutputUnitProperty_EnableIO, {:?}, {:?}, {:?}, {:?}) -> {:?}", in_unit, in_scope, in_element, enabled, in_data_size, result);
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioUnitSetProperty({:?}, kAudioOutputUnitProperty_EnableIO, {:?}, {:?}, {:?}, {:?}) -> {:?}",
+                    in_unit,
+                    in_scope,
+                    in_element,
+                    enabled,
+                    in_data_size,
+                    result
+                ),
+            );
         }
         _ => unimplemented!(),
     };
@@ -158,6 +211,16 @@ fn AudioUnitGetProperty(
             let max_frames: u32 = host_object.maximum_frames_per_slice;
             env.mem.write(out_data.cast(), max_frames);
             env.mem.write(io_data_size.cast(), guest_size_of::<u32>());
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioUnitGetProperty({:?}, kAudioUnitProperty_MaximumFramesPerSlice, {:?}, {:?}) -> {}",
+                    in_unit,
+                    in_scope,
+                    in_element,
+                    max_frames
+                ),
+            );
         }
         kAudioUnitProperty_StreamFormat => {
             assert_eq!(
@@ -174,6 +237,16 @@ fn AudioUnitGetProperty(
             env.mem.write(
                 io_data_size.cast(),
                 guest_size_of::<AudioStreamBasicDescription>(),
+            );
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioUnitGetProperty({:?}, kAudioUnitProperty_StreamFormat, {:?}, {:?}) -> {:?}",
+                    in_unit,
+                    in_scope,
+                    in_element,
+                    stream_format
+                ),
             );
         }
         kAudioUnitProperty_SampleRate => {
@@ -196,6 +269,16 @@ fn AudioUnitGetProperty(
             };
             env.mem.write(out_data.cast(), sample_rate);
             env.mem.write(io_data_size.cast(), guest_size_of::<f64>());
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioUnitGetProperty({:?}, kAudioUnitProperty_SampleRate, {:?}, {:?}) -> {}",
+                    in_unit,
+                    in_scope,
+                    in_element,
+                    sample_rate
+                ),
+            );
         }
         _ => unimplemented!("in_id {}", in_id),
     };
@@ -233,7 +316,7 @@ fn AudioOutputUnitStart(env: &mut Environment, ci: AudioUnit) -> OSStatus {
     render_audio_unit(env, ci);
 
     let result = 0; // Success
-    log_dbg!("AudioOutputUnitStart({:?}) -> {:?}", ci, result);
+    audio_log(env, format_args!("AudioOutputUnitStart({:?}) -> {:?}", ci, result));
     result
 }
 
@@ -260,14 +343,17 @@ fn AudioOutputUnitStop(env: &mut Environment, ci: AudioUnit) -> OSStatus {
     } else {
         -1
     };
-    log_dbg!("AudioOutputUnitStop({:?}) -> {:?}", ci, result);
+    audio_log(env, format_args!("AudioOutputUnitStop({:?}) -> {:?}", ci, result));
     result
 }
 
 pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
+    let audio_log_enabled = env.options.audio_log;
     if env.bundle.bundle_identifier().starts_with("com.ea.simcity") {
         // If enabled, we have some random crashes inside AURenderCallback ;(
-        log_dbg!("Applying game-specific hack for SimCity: skipping rendering of audio units");
+        if audio_log_enabled {
+            log_dbg!("Applying game-specific hack for SimCity: skipping rendering of audio units");
+        }
         return;
     }
 
@@ -353,12 +439,14 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
     static RENDER_LOG_COUNT: AtomicUsize = AtomicUsize::new(0);
     let log_count = RENDER_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
     if log_count < 5 {
-        log_dbg!(
-            "render_audio_unit {:?}: frames {} sample_rate {}",
-            audio_unit,
-            number_frames,
-            sample_rate
-        );
+        if audio_log_enabled {
+            log_dbg!(
+                "render_audio_unit {:?}: frames {} sample_rate {}",
+                audio_unit,
+                number_frames,
+                sample_rate
+            );
+        }
     }
 
     let bytes_per_channel = stream_format.bits_per_channel / 8;
@@ -432,11 +520,13 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         ),
     );
     if render_status != 0 {
-        log_dbg!(
-            "render_audio_unit {:?}: render callback returned {}",
-            audio_unit,
-            render_status
-        );
+        if audio_log_enabled {
+            log_dbg!(
+                "render_audio_unit {:?}: render callback returned {}",
+                audio_unit,
+                render_status
+            );
+        }
     }
 
     let bytes_written = if input_stream_format.is_some() {
@@ -449,7 +539,12 @@ pub fn render_audio_unit(env: &mut Environment, audio_unit: AudioUnit) {
         audio_buffer_list_value.buffers[0].data_byte_size
     };
     if bytes_written == 0 {
-        log_dbg!("render_audio_unit {:?}: render callback returned 0 bytes", audio_unit);
+        if audio_log_enabled {
+            log_dbg!(
+                "render_audio_unit {:?}: render callback returned 0 bytes",
+                audio_unit
+            );
+        }
     }
 
     let buffer_size = buffer_size.min(bytes_written);

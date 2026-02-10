@@ -31,6 +31,7 @@ use crate::mem::{
 use crate::objc::msg;
 use crate::Environment;
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 
 #[derive(Default)]
 pub struct State {
@@ -115,6 +116,18 @@ const kAudioQueueErr_InvalidBuffer: OSStatus = -66687;
 const kAudioQueueErr_InvalidPropertySize: OSStatus = -66683;
 const kAudioQueueErr_BufferInQueue: OSStatus = -66679;
 
+fn audio_log(env: &Environment, args: fmt::Arguments) {
+    if env.options.audio_log {
+        log!("{}", args);
+    }
+}
+
+fn audio_log_dbg(env: &Environment, args: fmt::Arguments) {
+    if env.options.audio_log {
+        log_dbg!("{}", args);
+    }
+}
+
 pub fn AudioQueueNewOutput(
     env: &mut Environment,
     in_format: ConstPtr<AudioStreamBasicDescription>,
@@ -192,10 +205,13 @@ pub fn AudioQueueNewOutput(
         log_dbg!("Warning: Audio queue {:?} will be ignored because its format is not yet supported: {:#?}", aq_ref, format);
     }
 
-    log_dbg!(
-        "AudioQueueNewOutput() for format {:#?}, new audio queue handle: {:?}",
-        format,
-        aq_ref,
+    audio_log_dbg(
+        env,
+        format_args!(
+            "AudioQueueNewOutput() for format {:#?}, new audio queue handle: {:?}",
+            format,
+            aq_ref,
+        ),
     );
 
     0 // success
@@ -211,10 +227,20 @@ pub fn AudioQueueGetParameter(
 
     assert!(in_param_id == kAudioQueueParam_Volume); // others unimplemented
 
-    let state = State::get(&mut env.framework_state);
-    let host_object = state.audio_queues.get_mut(&in_aq).unwrap();
+    let volume = {
+        let state = State::get(&mut env.framework_state);
+        let host_object = state.audio_queues.get_mut(&in_aq).unwrap();
+        host_object.volume
+    };
 
-    env.mem.write(out_value, host_object.volume);
+    env.mem.write(out_value, volume);
+    if env.options.audio_log {
+        log_dbg!(
+            "AudioQueueGetParameter({:?}, kAudioQueueParam_Volume) -> {}",
+            in_aq,
+            volume
+        );
+    }
 
     0 // success
 }
@@ -229,15 +255,21 @@ pub fn AudioQueueSetParameter(
 
     assert!(in_param_id == kAudioQueueParam_Volume); // others unimplemented
 
-    let state = State::get(&mut env.framework_state);
-    let host_object = state.audio_queues.get_mut(&in_aq).unwrap();
+    let (volume, al_source) = {
+        let state = State::get(&mut env.framework_state);
+        let host_object = state.audio_queues.get_mut(&in_aq).unwrap();
+        host_object.volume = in_value;
+        (host_object.volume, host_object.al_source)
+    };
 
-    host_object.volume = in_value;
-    log_dbg!(
-        "AudioQueueSetParameter kAudioQueueParam_Volume is set to {}",
-        host_object.volume
-    );
-    if let Some(al_source) = host_object.al_source {
+    if env.options.audio_log {
+        log_dbg!(
+            "AudioQueueSetParameter({:?}, kAudioQueueParam_Volume) = {}",
+            in_aq,
+            volume
+        );
+    }
+    if let Some(al_source) = al_source {
         let _context_manager = env.framework_state.audio_toolbox.make_al_context_current();
         // If not clamped, OpenAL generates an error.
         // While Apple's docs states that this range is expected,
@@ -301,6 +333,16 @@ pub fn AudioQueueAllocateBuffer(
     host_object.buffers.push(buffer_ptr);
     env.mem.write(out_buffer, buffer_ptr);
 
+    audio_log_dbg(
+        env,
+        format_args!(
+            "AudioQueueAllocateBuffer({:?}, {} bytes) -> {:?}",
+            in_aq,
+            in_buffer_byte_size,
+            buffer_ptr
+        ),
+    );
+
     0 // success
 }
 
@@ -327,7 +369,7 @@ pub fn AudioQueueEnqueueBuffer(
     }
 
     host_object.buffer_queue.push_back(in_buffer);
-    log_dbg!("New buffer enqueued: {:?}", in_buffer);
+    audio_log_dbg(env, format_args!("AudioQueueEnqueueBuffer({:?})", in_buffer));
 
     0 // success
 }
@@ -349,6 +391,15 @@ fn AudioQueueAddPropertyListener(
 
         host_object.aq_is_running_proc = Some(in_proc);
         host_object.aq_is_running_user_data = Some(in_user_data);
+        audio_log_dbg(
+            env,
+            format_args!(
+                "AudioQueueAddPropertyListener({:?}, kAudioQueueProperty_IsRunning, {:?}, {:?})",
+                in_aq,
+                in_proc,
+                in_user_data
+            ),
+        );
     } else {
         log!(
             "TODO: AudioQueueAddPropertyListener({:?}, {}, {:?}, {:?})",
@@ -377,6 +428,15 @@ fn AudioQueueRemovePropertyListener(
 
         host_object.aq_is_running_proc = None;
         host_object.aq_is_running_user_data = None;
+        audio_log_dbg(
+            env,
+            format_args!(
+                "AudioQueueRemovePropertyListener({:?}, kAudioQueueProperty_IsRunning, {:?}, {:?})",
+                in_aq,
+                in_proc,
+                in_user_data
+            ),
+        );
     } else {
         log!(
             "TODO: AudioQueueRemovePropertyListener({:?}, {}, {:?}, {:?})",
@@ -405,6 +465,15 @@ fn AudioQueueGetPropertySize(
     return_if_null!(in_aq);
 
     env.mem.write(out_data_size, property_size(in_property_id));
+    audio_log_dbg(
+        env,
+        format_args!(
+            "AudioQueueGetPropertySize({:?}, {:?}) -> {}",
+            in_aq,
+            debug_fourcc(in_property_id),
+            env.mem.read(out_data_size)
+        ),
+    );
     0 // success
 }
 
@@ -436,6 +505,14 @@ fn AudioQueueGetProperty(
                 AudioQueueIsRunning::Stopped => 0,
             };
             env.mem.write(out_property_data.cast(), is_running);
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "AudioQueueGetProperty({:?}, kAudioQueueProperty_IsRunning) -> {}",
+                    in_aq,
+                    is_running
+                ),
+            );
         }
         _ => unreachable!(),
     }
@@ -800,7 +877,10 @@ pub fn handle_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
             // handling.
             if al_source_state == al::AL_STOPPED {
                 al::alSourcePlay(al_source);
-                log_dbg!("Restarted OpenAL source for queue {:?}", in_aq);
+                audio_log_dbg(
+                    env,
+                    format_args!("Restarted OpenAL source for queue {:?}", in_aq),
+                );
             }
         }
     }
@@ -815,9 +895,12 @@ pub fn handle_audio_queue(env: &mut Environment, in_aq: AudioQueueRef) {
         // If OpenAL still says the source is stopped, it must have run out of
         // data, and therefore it's time to complete the "asynchronous stop".
         if al_source_state == al::AL_STOPPED {
-            log_dbg!(
-                "OpenAL source stopped for queue {:?}, completing asynchronous stop.",
-                in_aq
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "OpenAL source stopped for queue {:?}, completing asynchronous stop.",
+                    in_aq
+                ),
             );
             finish_stopping_audio_queue(env, in_aq);
         }
@@ -870,22 +953,27 @@ pub fn AudioQueueStart(
 
     let _context_manager = prime_audio_queue(env, in_aq, None);
 
-    let host_object = State::get(&mut env.framework_state)
-        .audio_queues
-        .get_mut(&in_aq)
-        .unwrap();
+    let (format, al_source) = {
+        let host_object = State::get(&mut env.framework_state)
+            .audio_queues
+            .get_mut(&in_aq)
+            .unwrap();
+        host_object.is_running = AudioQueueIsRunning::Running;
+        (host_object.format, host_object.al_source)
+    };
 
-    host_object.is_running = AudioQueueIsRunning::Running;
+    if env.options.audio_log {
+        log!("AudioQueueStart({:?})", in_aq);
+    }
 
-    if is_supported_audio_format(&host_object.format) {
-        let al_source = host_object.al_source.unwrap();
+    if is_supported_audio_format(&format) {
+        let al_source = al_source.unwrap();
         unsafe { al::alSourcePlay(al_source) };
         assert!(unsafe { al::alGetError() } == 0);
     } else {
-        log!(
-            "AudioQueueStart: Unsupported format {:?}",
-            host_object.format
-        );
+        if env.options.audio_log {
+            log!("AudioQueueStart: Unsupported format {:?}", format);
+        }
     }
 
     notify_aq_is_running(env, in_aq);
@@ -908,6 +996,8 @@ pub fn AudioQueuePause(env: &mut Environment, in_aq: AudioQueueRef) -> OSStatus 
         assert!(unsafe { al::alGetError() } == 0);
     }
 
+    audio_log(env, format_args!("AudioQueuePause({:?})", in_aq));
+
     0 // success
 }
 
@@ -928,7 +1018,9 @@ pub fn AudioQueueStop(env: &mut Environment, in_aq: AudioQueueRef, in_immediate:
     return_if_null!(in_aq);
 
     if in_immediate {
-        log_dbg!("Performing immediate AudioQueueStop for {:?}.", in_aq);
+        if env.options.audio_log {
+            log_dbg!("Performing immediate AudioQueueStop for {:?}.", in_aq);
+        }
 
         let _context_manager = env.framework_state.audio_toolbox.make_al_context_current();
 
@@ -944,14 +1036,22 @@ pub fn AudioQueueStop(env: &mut Environment, in_aq: AudioQueueRef, in_immediate:
         let state = State::get(&mut env.framework_state);
         let host_object = state.audio_queues.get_mut(&in_aq).unwrap();
         if host_object.is_running != AudioQueueIsRunning::Stopped {
-            log_dbg!("Starting asynchronous AudioQueueStop for {:?}.", in_aq);
             host_object.is_running = AudioQueueIsRunning::Stopping;
+            if env.options.audio_log {
+                log_dbg!("Starting asynchronous AudioQueueStop for {:?}.", in_aq);
+            }
         } else {
-            log_dbg!(
-                "Ignoring asynchronous AudioQueueStop for {:?} (already stopped).",
-                in_aq
-            );
+            if env.options.audio_log {
+                log_dbg!(
+                    "Ignoring asynchronous AudioQueueStop for {:?} (already stopped).",
+                    in_aq
+                );
+            }
         }
+    }
+
+    if env.options.audio_log {
+        log!("AudioQueueStop({:?}, immediate={:?})", in_aq, in_immediate);
     }
 
     0 // success
@@ -962,10 +1062,11 @@ fn AudioQueueReset(env: &mut Environment, in_aq: AudioQueueRef) -> OSStatus {
 
     let _context_manager = env.framework_state.audio_toolbox.make_al_context_current();
 
+    if env.options.audio_log {
+        log_dbg!("Resetting queue {:?}.", in_aq);
+    }
+
     let state = State::get(&mut env.framework_state);
-
-    log_dbg!("Resetting queue {:?}.", in_aq);
-
     let host_object = state.audio_queues.get_mut(&in_aq).unwrap();
 
     if let Some(al_source) = host_object.al_source {
@@ -1018,7 +1119,7 @@ fn AudioQueueFreeBuffer(
     if let Some(index) = host_object.buffers.iter().position(|x| x == &in_buffer) {
         host_object.buffers.remove(index);
 
-        log_dbg!("Freeing buffer: {:?}", in_buffer);
+        audio_log_dbg(env, format_args!("Freeing buffer: {:?}", in_buffer));
 
         let buffer = env.mem.read(in_buffer);
         env.mem.free(buffer.audio_data);
@@ -1042,7 +1143,7 @@ pub fn AudioQueueDispose(
     let state = State::get(&mut env.framework_state);
 
     let mut host_object = state.audio_queues.remove(&in_aq).unwrap();
-    log_dbg!("Disposing of audio queue {:?}", in_aq);
+    audio_log_dbg(env, format_args!("Disposing of audio queue {:?}", in_aq));
 
     env.mem.free(in_aq.cast());
 

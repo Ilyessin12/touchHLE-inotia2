@@ -20,6 +20,7 @@ use crate::mem::{ConstPtr, ConstVoidPtr, GuestUSize, MutPtr, MutVoidPtr, Ptr, Sa
 use crate::Environment;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
+use std::fmt;
 use touchHLE_openal_soft_wrapper::{
     ALC_DEVICE_SPECIFIER, ALC_FREQUENCY, ALC_MONO_SOURCES, ALC_REFRESH, ALC_STEREO_SOURCES,
     ALC_SYNC, AL_EXTENSIONS, AL_RENDERER, AL_VENDOR, AL_VERSION,
@@ -32,6 +33,18 @@ pub const DYLIB: HostDylib = HostDylib {
     constant_exports: &[],
     function_exports: &[FUNCTIONS],
 };
+
+fn audio_log(env: &Environment, args: fmt::Arguments) {
+    if env.options.audio_log {
+        log!("{}", args);
+    }
+}
+
+fn audio_log_dbg(env: &Environment, args: fmt::Arguments) {
+    if env.options.audio_log {
+        log_dbg!("{}", args);
+    }
+}
 
 #[derive(Default)]
 pub struct State {
@@ -79,24 +92,27 @@ fn alcOpenDevice(env: &mut Environment, devicename: ConstPtr<u8>) -> MutPtr<Gues
 
     let res = unsafe { al::alcOpenDevice(std::ptr::null()) };
     if res.is_null() {
-        log_dbg!("alcOpenDevice(NULL) returned NULL");
+        audio_log_dbg(env, format_args!("alcOpenDevice(NULL) returned NULL"));
         return Ptr::null();
     }
 
     let guest_res = env.mem.alloc_and_write(GuestALCdevice { _filler: 0 });
     State::get(env).devices.insert(guest_res, res);
-    log_dbg!("alcOpenDevice(NULL) => {:?} (host: {:?})", guest_res, res,);
+    audio_log_dbg(
+        env,
+        format_args!("alcOpenDevice(NULL) => {:?} (host: {:?})", guest_res, res),
+    );
     guest_res
 }
 fn alcCloseDevice(env: &mut Environment, device: MutPtr<GuestALCdevice>) -> bool {
     if device.is_null() {
-        log!("alcCloseDevice() is called with NULL device, ignoring");
+        audio_log(env, format_args!("alcCloseDevice() is called with NULL device, ignoring"));
         return false;
     }
     let host_device = State::get(env).devices.remove(&device).unwrap();
     env.mem.free(device.cast());
     let res = unsafe { al::alcCloseDevice(host_device) };
-    log_dbg!("alcCloseDevice({:?}) => {:?}", device, res,);
+    audio_log_dbg(env, format_args!("alcCloseDevice({:?}) => {:?}", device, res));
     res != al::ALC_FALSE
 }
 
@@ -104,7 +120,7 @@ fn alcGetError(env: &mut Environment, device: MutPtr<GuestALCdevice>) -> i32 {
     let &host_device = State::get(env).devices.get(&device).unwrap();
 
     let res = unsafe { al::alcGetError(host_device) };
-    log_dbg!("alcGetError({:?}) => {:#x}", host_device, res);
+    audio_log_dbg(env, format_args!("alcGetError({:?}) => {:#x}", host_device, res));
     res
 }
 
@@ -117,7 +133,7 @@ fn alcGetString(
 
     let res = unsafe { al::alcGetString(std::ptr::null_mut(), param) };
     let s = unsafe { CStr::from_ptr(res) };
-    log_dbg!("alcGetString({:?}) => {:?}", param, s);
+    audio_log_dbg(env, format_args!("alcGetString({:?}) => {:?}", param, s));
     log!("TODO: alcGetString({}) leaks memory", param);
     env.mem.alloc_and_write_cstr(s.to_bytes()).cast_const()
 }
@@ -142,10 +158,13 @@ fn alcCreateContext(
         // attribute list is NULL terminated
         while env.mem.read(ptr) != 0 {
             let attr = env.mem.read(ptr);
-            log_dbg!(
-                "alcCreateContext attribute {:#x} => {}",
-                attr,
-                env.mem.read(ptr + 1)
+            audio_log_dbg(
+                env,
+                format_args!(
+                    "alcCreateContext attribute {:#x} => {}",
+                    attr,
+                    env.mem.read(ptr + 1)
+                ),
             );
             assert!(ALLOWED_CONTEXT_ATTRIBUTES.contains(&attr)); // TODO
             ptr += 2;
@@ -160,34 +179,46 @@ fn alcCreateContext(
 
     let res = unsafe { al::alcCreateContext(host_device, attr_list_ptr) };
     if res.is_null() {
-        log_dbg!("alcCreateContext({:?}, NULL) returned NULL", device);
+        audio_log_dbg(
+            env,
+            format_args!("alcCreateContext({:?}, NULL) returned NULL", device),
+        );
         return Ptr::null();
     }
 
     let guest_res = env.mem.alloc_and_write(GuestALCcontext { _filler: 0 });
     State::get(env).contexts.insert(guest_res, res);
-    log_dbg!(
-        "alcCreateContext({:?}, NULL) => {:?} (host: {:?})",
-        device,
-        guest_res,
-        res,
+    audio_log_dbg(
+        env,
+        format_args!(
+            "alcCreateContext({:?}, NULL) => {:?} (host: {:?})",
+            device,
+            guest_res,
+            res,
+        ),
     );
     guest_res
 }
 fn alcDestroyContext(env: &mut Environment, context: MutPtr<GuestALCcontext>) {
     if context.is_null() {
-        log!("alcDestroyContext() is called with NULL context, ignoring");
+        audio_log(
+            env,
+            format_args!("alcDestroyContext() is called with NULL context, ignoring"),
+        );
         return;
     }
     let host_context = State::get(env).contexts.remove(&context).unwrap();
     env.mem.free(context.cast());
     unsafe { al::alcDestroyContext(host_context) };
-    log_dbg!("alcDestroyContext({:?})", context);
+    audio_log_dbg(env, format_args!("alcDestroyContext({:?})", context));
 }
 
 fn alcProcessContext(env: &mut Environment, context: MutPtr<GuestALCcontext>) {
     if context.is_null() {
-        log!("alcProcessContext() is called with NULL context, ignoring");
+        audio_log(
+            env,
+            format_args!("alcProcessContext() is called with NULL context, ignoring"),
+        );
         return;
     }
     let host_context = State::get(env).contexts.get(&context).copied().unwrap();
@@ -195,7 +226,10 @@ fn alcProcessContext(env: &mut Environment, context: MutPtr<GuestALCcontext>) {
 }
 fn alcSuspendContext(env: &mut Environment, context: MutPtr<GuestALCcontext>) {
     if context.is_null() {
-        log!("alcSuspendContext() is called with NULL context, ignoring");
+        audio_log(
+            env,
+            format_args!("alcSuspendContext() is called with NULL context, ignoring"),
+        );
         return;
     }
     let host_context = State::get(env).contexts.get(&context).copied().unwrap();

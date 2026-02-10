@@ -217,6 +217,11 @@ Debugging options:
         Disables the graphical error message box (outputs to terminal/log file
         only).
 
+    --audio-log
+    --no-audio-log
+        Enable or disable detailed audio logging. This is useful for diagnosing
+        audio initialization and playback problems.
+
     --dump=...
         Dumps some information about app/emulator to dump file. Check
         src/options.rs:parse_dump_options for the currently available options.
